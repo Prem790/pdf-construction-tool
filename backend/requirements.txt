@@ -1,0 +1,33 @@
+# Web Framework
+fastapi>=0.104.1
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+
+# PDF Processing (Alternative to PyMuPDF)
+pdf2image>=1.16.3
+PyPDF2>=3.0.1
+Pillow>=10.3.0
+
+# OCR and AI
+google-generativeai>=0.3.2
+azure-cognitiveservices-vision-computervision>=0.9.0
+azure-common>=1.1.28
+msrestazure>=0.6.4
+msrest>=0.7.1
+azure-identity>=1.15.0
+
+# ML and NLP - Updated for Python 3.13 compatibility
+sentence-transformers>=2.3.0
+scikit-learn>=1.4.0
+numpy>=1.26.0
+pandas>=2.2.0
+
+# Utilities
+python-dotenv>=1.0.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+python-dateutil>=2.8.2
+
+# Development
+pytest>=7.4.3
+pytest-asyncio>=0.21.1

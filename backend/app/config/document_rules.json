@@ -1,0 +1,166 @@
+// backend\app\config\document_rules.json
+
+{
+    "document_types": {
+      "loan_agreement": {
+        "name": "Loan Agreement",
+        "sections": [
+          {
+            "name": "cover_page",
+            "priority": 1,
+            "weight": 1.0,
+            "indicators": ["loan agreement", "dated", "between", "borrower", "lender"],
+            "required_any": ["loan agreement", "between"],
+            "boost_patterns": ["loan agreement.*dated", "between.*borrower.*lender"]
+          },
+          {
+            "name": "definitions",
+            "priority": 2,
+            "weight": 0.9,
+            "indicators": ["article - i", "definitions", "general conditions"],
+            "required_any": ["definitions", "article"],
+            "boost_patterns": ["article.*i", "definitions.*general conditions"]
+          },
+          {
+            "name": "loan_terms",
+            "priority": 3,
+            "weight": 0.9,
+            "indicators": ["article - ii", "the loan", "amount and terms"],
+            "required_any": ["the loan", "amount.*terms"],
+            "boost_patterns": ["article.*ii", "amount.*terms.*loan"]
+          },
+          {
+            "name": "security",
+            "priority": 4,
+            "weight": 0.8,
+            "indicators": ["article - iii", "security", "security for the loan"],
+            "required_any": ["security", "article.*iii"],
+            "boost_patterns": ["article.*iii", "security.*loan"]
+          },
+          {
+            "name": "appointment",
+            "priority": 5,
+            "weight": 0.8,
+            "indicators": ["article - iv", "appointment", "nominee directors"],
+            "required_any": ["appointment", "nominee"],
+            "boost_patterns": ["article.*iv", "appointment.*nominee"]
+          },
+          {
+            "name": "special_conditions",
+            "priority": 6,
+            "weight": 0.7,
+            "indicators": ["article - v", "special conditions"],
+            "required_any": ["special conditions", "article.*v"],
+            "boost_patterns": ["article.*v", "special.*conditions"]
+          },
+          {
+            "name": "effective_date",
+            "priority": 7,
+            "weight": 0.7,
+            "indicators": ["article - vi", "effective date", "disbursement"],
+            "required_any": ["effective date", "disbursement"],
+            "boost_patterns": ["article.*vi", "effective.*date"]
+          },
+          {
+            "name": "schedules",
+            "priority": 8,
+            "weight": 0.6,
+            "indicators": ["schedule", "particulars", "financing plan", "amortisation"],
+            "required_any": ["schedule", "particulars"],
+            "boost_patterns": ["schedule.*[ivi]+", "particulars.*loan"]
+          },
+          {
+            "name": "signatures",
+            "priority": 10,
+            "weight": 1.0,
+            "indicators": ["witness whereof", "common seal", "signed and delivered"],
+            "required_any": ["witness", "signed", "seal"],
+            "boost_patterns": ["witness.*whereof", "signed.*delivered"]
+          }
+        ]
+      },
+      "mortgage": {
+        "name": "Mortgage Application",
+        "sections": [
+          {
+            "name": "application_header",
+            "priority": 1,
+            "weight": 1.0,
+            "indicators": ["mortgage loan application", "loan application", "application date", "loan amount requested"],
+            "required_any": ["application", "loan"],
+            "boost_patterns": ["^(mortgage|loan)\\s+(application|request)"]
+          },
+          {
+            "name": "borrower_info", 
+            "priority": 2,
+            "weight": 1.0,
+            "indicators": ["borrower information", "primary borrower", "social security", "date of birth"],
+            "required_any": ["borrower", "ssn", "social security"],
+            "boost_patterns": ["borrower.*information", "personal.*details"]
+          },
+          {
+            "name": "employment",
+            "priority": 3,
+            "weight": 0.9,
+            "indicators": ["employment information", "employer name", "monthly income", "years employed"],
+            "required_any": ["employment", "employer", "income"],
+            "boost_patterns": ["employment.*verification", "income.*statement"]
+          },
+          {
+            "name": "property",
+            "priority": 4,
+            "weight": 0.8,
+            "indicators": ["property information", "subject property", "property address", "property type"],
+            "required_any": ["property", "address"],
+            "boost_patterns": ["property.*details", "subject.*property"]
+          },
+          {
+            "name": "loan_terms",
+            "priority": 5,
+            "weight": 0.7,
+            "indicators": ["loan terms", "interest rate", "monthly payment", "loan details"],
+            "required_any": ["interest", "payment", "terms"],
+            "boost_patterns": ["loan.*terms", "interest.*rate"]
+          },
+          {
+            "name": "disclosures",
+            "priority": 8,
+            "weight": 0.5,
+            "indicators": ["disclosures", "legal notice", "privacy notice", "fair credit"],
+            "required_any": ["disclosure", "notice"],
+            "boost_patterns": ["legal.*disclosure", "privacy.*policy"]
+          },
+          {
+            "name": "signatures",
+            "priority": 9,
+            "weight": 1.0,
+            "indicators": ["signature", "borrower signature", "date signed", "acknowledgment"],
+            "required_any": ["signature", "signed", "acknowledge"],
+            "boost_patterns": [".*signature.*", "date.*signed", "_+\\s*date"]
+          }
+        ]
+      }
+    },
+    "general_patterns": {
+      "first_page_indicators": [
+        "loan agreement", "dated", "between", "title", "header", "application", "report date", "cover"
+      ],
+      "last_page_indicators": [
+        "signature", "acknowledgment", "certification", "date signed", "witness whereof", "common seal"
+      ],
+      "continuation_patterns": ["continued from", "see page", "page \\d+ of \\d+"],
+      "section_break_patterns": ["^[A-Z][A-Z\\s]+$", "^\\d+\\.", "^[IVX]+\\.", "SECTION", "ARTICLE", "SCHEDULE"],
+      "page_number_patterns": [
+        "-\\d+-", 
+        "^\\s*-\\d+\\s*-\\s*$",
+        "page\\s+\\d+",
+        "\\d+\\s+of\\s+\\d+",
+        "^\\s*\\d+\\s*$"
+      ]
+    },
+    "confidence_thresholds": {
+      "high": 0.8,
+      "medium": 0.6,
+      "low": 0.4
+    }
+  }
