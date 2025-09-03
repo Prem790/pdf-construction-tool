@@ -26,19 +26,34 @@ export const getJobStatus = async (jobId) => {
 };
 
 export const downloadResult = async (jobId, filename) => {
-  const response = await api.get(`/download/${jobId}`, {
-    responseType: 'blob',
-  });
-  
-  // Create download link
-  const url = window.URL.createObjectURL(new Blob([response.data]));
-  const link = document.createElement('a');
-  link.href = url;
-  link.setAttribute('download', filename || 'reordered.pdf');
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  window.URL.revokeObjectURL(url);
+  try {
+    const response = await api.get(`/download/${jobId}`, {
+      responseType: 'blob',
+    });
+    
+    // Create blob with explicit PDF type
+    const blob = new Blob([response.data], { type: 'application/pdf' });
+    
+    // Create download link
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename || 'reordered.pdf';
+    
+    // Important: Add to body before clicking
+    document.body.appendChild(link);
+    link.click();
+    
+    // Cleanup after a short delay
+    setTimeout(() => {
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    }, 100);
+    
+  } catch (error) {
+    console.error('Download error details:', error);
+    throw error;
+  }
 };
 
 export const getProcessingLogs = async (jobId) => {

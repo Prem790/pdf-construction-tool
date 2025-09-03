@@ -1,3 +1,5 @@
+# backend\app\api\routes.py
+
 from fastapi import APIRouter, UploadFile, File, HTTPException, Request, BackgroundTasks
 from fastapi.responses import FileResponse
 import uuid
@@ -241,12 +243,68 @@ async def process_pdf_background(job_id: str, pdf_path: str, original_filename: 
                 page_data['ocr_result'] = {'text': '', 'confidence': 0.0, 'method': 'none'}
                 page_data['structure_analysis'] = {}
         
-        # Step 3: Determine page order
+        # Step 2.5: Remove blank and duplicate pages BEFORE ordering
         processing_jobs[job_id].processing_logs.append(
             ProcessingLog(
                 timestamp=datetime.now().isoformat(),
                 level="INFO",
-                message="Analyzing document structure and determining optimal page order"
+                message="Removing blank and duplicate pages from document"
+            )
+        )
+        
+        try:
+            cleaned_pages, removal_log = ordering_service.remove_blank_and_duplicate_pages(pages_data)
+            
+            # Log the cleaning results
+            processing_jobs[job_id].processing_logs.append(
+                ProcessingLog(
+                    timestamp=datetime.now().isoformat(),
+                    level="INFO",
+                    message=f"Page cleaning completed: {removal_log['original_count']} → {removal_log['final_count']} pages"
+                )
+            )
+            
+            if removal_log['blank_pages_removed']:
+                processing_jobs[job_id].processing_logs.append(
+                    ProcessingLog(
+                        timestamp=datetime.now().isoformat(),
+                        level="INFO",
+                        message=f"Removed {len(removal_log['blank_pages_removed'])} blank pages: {[p+1 for p in removal_log['blank_pages_removed']]}"
+                    )
+                )
+            
+            if removal_log['duplicate_pages_removed']:
+                duplicate_info = [f"{dup[0]+1}→{dup[1]+1}" for dup in removal_log['duplicate_pages_removed']]
+                processing_jobs[job_id].processing_logs.append(
+                    ProcessingLog(
+                        timestamp=datetime.now().isoformat(),
+                        level="INFO",
+                        message=f"Removed {len(removal_log['duplicate_pages_removed'])} duplicate pages: {duplicate_info}"
+                    )
+                )
+            
+            # Update pages_data to use cleaned pages
+            pages_data = cleaned_pages
+            
+            # Update document analysis with new page count
+            processing_jobs[job_id].document_analysis.total_pages = len(pages_data)
+            
+        except Exception as e:
+            print(f"Error during page cleaning: {e}")
+            processing_jobs[job_id].processing_logs.append(
+                ProcessingLog(
+                    timestamp=datetime.now().isoformat(),
+                    level="WARNING",
+                    message=f"Page cleaning failed: {str(e)}. Proceeding with original pages."
+                )
+            )
+        
+        # Step 3: Determine page order (using cleaned pages)
+        processing_jobs[job_id].processing_logs.append(
+            ProcessingLog(
+                timestamp=datetime.now().isoformat(),
+                level="INFO",
+                message=f"Analyzing document structure and determining optimal page order for {len(pages_data)} pages"
             )
         )
         

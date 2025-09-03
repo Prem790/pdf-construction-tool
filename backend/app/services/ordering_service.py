@@ -1,4 +1,4 @@
-# backend\app\services\ordering_service.py
+# backend/app/services/ordering_service.py
 
 from typing import List, Dict, Tuple, Optional, Any
 import re
@@ -57,6 +57,83 @@ class AdaptiveOrderingService:
             SemanticSimilarityStrategy(self.embedding_model),
             LLMReasoningStrategy(self.gemini_client)
         ]
+
+    # NEW: Simple blank page detection methods
+    def is_page_blank_simple(self, page: Dict) -> bool:
+        """Simple blank page detection - zero characters = blank"""
+        
+        # Step 1: Get all text from the page
+        direct_text = page.get('direct_text', '')
+        
+        ocr_result = page.get('ocr_result', {})
+        if isinstance(ocr_result, dict):
+            ocr_text = ocr_result.get('text', '')
+        else:
+            ocr_text = ''
+        
+        # Step 2: Combine all text
+        all_text = direct_text + ' ' + ocr_text
+        
+        # Step 3: Remove all whitespace and count actual characters
+        clean_text = re.sub(r'\s', '', all_text)  # Remove ALL whitespace
+        char_count = len(clean_text)
+        
+        # Step 4: Debug output
+        print(f"Page analysis:")
+        print(f"  Raw text length: {len(all_text)}")
+        print(f"  Clean text length: {char_count}")
+        print(f"  Clean text preview: '{clean_text[:50]}'")
+        
+        # Step 5: Simple rule - if less than 3 actual characters, it's blank
+        is_blank = char_count < 3
+        
+        print(f"  Result: {'BLANK' if is_blank else 'NOT BLANK'}")
+        return is_blank
+
+    def remove_blank_pages_simple(self, pages_data: List[Dict]) -> Tuple[List[Dict], List[int]]:
+        """Remove blank pages using simple detection"""
+        
+        print(f"\n=== SIMPLE BLANK PAGE REMOVAL ===")
+        print(f"Analyzing {len(pages_data)} pages...")
+        
+        kept_pages = []
+        removed_pages = []
+        
+        for i, page in enumerate(pages_data):
+            print(f"\nPage {i+1}:")
+            
+            if self.is_page_blank_simple(page):
+                removed_pages.append(i)
+                print(f"  ❌ REMOVING page {i+1}")
+            else:
+                page_copy = page.copy()
+                page_copy['original_position'] = i
+                kept_pages.append(page_copy)
+                print(f"  ✅ KEEPING page {i+1}")
+        
+        print(f"\n=== SUMMARY ===")
+        print(f"Total pages: {len(pages_data)}")
+        print(f"Blank pages removed: {len(removed_pages)}")
+        print(f"Pages kept: {len(kept_pages)}")
+        
+        return kept_pages, removed_pages
+
+    def remove_blank_and_duplicate_pages(self, pages_data: List[Dict]) -> Tuple[List[Dict], Dict[str, List]]:
+        """SIMPLIFIED - only test blank page removal for now"""
+        
+        # Step 1: Only test blank page removal 
+        cleaned_pages, blank_pages = self.remove_blank_pages_simple(pages_data)
+        
+        # Step 2: Skip duplicate removal for now to focus on blank detection
+        
+        removal_log = {
+            'blank_pages_removed': blank_pages,
+            'duplicate_pages_removed': [],  # Skip for now
+            'original_count': len(pages_data),
+            'final_count': len(cleaned_pages)
+        }
+        
+        return cleaned_pages, removal_log
     
     def order_pages(self, pages_data: List[Dict]) -> Tuple[List[PageInfo], List[ProcessingLog]]:
         """Enhanced page ordering with multiple strategies and domain heuristics"""
@@ -616,39 +693,78 @@ class AdaptiveOrderingService:
             reasons.append(method_description[result.method])
         
         return "; ".join(reasons) if reasons else "Standard document flow"
-    
+
     def detect_missing_pages(self, page_contents: List[Dict]) -> List[int]:
-        """Enhanced missing page detection"""
+        """Enhanced missing page detection with proper validation"""
         missing_pages = []
         
-        # Method 1: Page number gap analysis
-        page_numbers = []
-        total_pages_mentioned = None
-        
-        for page in page_contents:
-            content = page.get('content', '').lower()
+        try:
+            # Method 1: Page number gap analysis
+            page_numbers = []
+            total_pages_mentioned = None
             
-            # Look for "X of Y" patterns
-            of_pattern = re.findall(r'(\d+)\s+of\s+(\d+)', content)
-            if of_pattern:
-                page_num, total = map(int, of_pattern[0])
-                page_numbers.append(page_num)
-                if total_pages_mentioned is None or total > total_pages_mentioned:
-                    total_pages_mentioned = total
+            for page in page_contents:
+                content = page.get('content', '').lower()
+                
+                # Look for "X of Y" patterns - but be more careful
+                of_patterns = re.findall(r'(\d+)\s+of\s+(\d+)', content)
+                for page_num_str, total_str in of_patterns:
+                    try:
+                        page_num = int(page_num_str)
+                        total = int(total_str)
+                        
+                        # Sanity check: total should be reasonable for document size
+                        if total <= len(page_contents) * 3 and total >= len(page_contents):
+                            page_numbers.append(page_num)
+                            if total_pages_mentioned is None or total > total_pages_mentioned:
+                                total_pages_mentioned = total
+                    except ValueError:
+                        continue
+                
+                # Look for simple page numbers in patterns like -7-, -20-
+                page_patterns = [
+                    r'-(\d+)-',
+                    r'^\s*(\d+)\s*$',
+                    r'page\s+(\d+)'
+                ]
+                
+                for pattern in page_patterns:
+                    matches = re.findall(pattern, content)
+                    for match in matches:
+                        try:
+                            page_num = int(match)
+                            # Only accept reasonable page numbers
+                            if 1 <= page_num <= len(page_contents) * 2:
+                                page_numbers.append(page_num)
+                        except ValueError:
+                            continue
             
-            # Look for simple page numbers
-            page_pattern = re.findall(r'page\s+(\d+)', content)
-            if page_pattern:
-                page_numbers.extend(map(int, page_pattern))
+            # Remove duplicates and validate
+            page_numbers = list(set(page_numbers))
+            page_numbers = [p for p in page_numbers if p > 0]
+            
+            # Additional validation: if we found way more page numbers than actual pages, something's wrong
+            if len(page_numbers) > len(page_contents) * 2:
+                print(f"Warning: Found {len(page_numbers)} page numbers for {len(page_contents)} pages. Possible detection error.")
+                return []
+            
+            # Only proceed if we have a reasonable total_pages_mentioned
+            if total_pages_mentioned and total_pages_mentioned <= len(page_contents) * 3:
+                for i in range(1, total_pages_mentioned + 1):
+                    if i not in page_numbers:
+                        missing_pages.append(i)
+            
+            # Final sanity check
+            if len(missing_pages) > len(page_contents) * 10:  # If we think there are 10x more missing pages than actual pages
+                print("Warning: Missing page detection seems incorrect, returning empty list")
+                return []
+                
+        except Exception as e:
+            print(f"Error in missing page detection: {e}")
+            return []
         
-        if page_numbers and total_pages_mentioned:
-            page_numbers = list(set(page_numbers))  # Remove duplicates
-            for i in range(1, total_pages_mentioned + 1):
-                if i not in page_numbers:
-                    missing_pages.append(i)
-        
-        return missing_pages
-    
+        return missing_pages[:50]  # Limit to first 50 to avoid UI overflow
+
     def detect_duplicate_pages(self, page_contents: List[Dict]) -> List[int]:
         """Enhanced duplicate page detection"""
         duplicates = []

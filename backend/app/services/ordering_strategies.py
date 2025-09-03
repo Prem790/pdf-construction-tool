@@ -1,3 +1,5 @@
+# backend\app\services\ordering_strategies.py
+
 from abc import ABC, abstractmethod
 from typing import List, Dict, Tuple, Optional
 import re
@@ -38,51 +40,128 @@ class BaseOrderingStrategy(ABC):
 class PageNumberStrategy(BaseOrderingStrategy):
     def __init__(self):
         super().__init__(threshold=0.8)
+        # Load patterns from config if available
+        self.config = self._load_page_number_patterns()
     
-    def attempt_ordering(self, page_contents: List[Dict]) -> OrderingResult:
-        page_numbers = {}
-        
-        for i, page in enumerate(page_contents):
-            content = page['content'].lower()
-            
-            patterns = [
+    def _load_page_number_patterns(self) -> List[str]:
+        """Load page number patterns from config file"""
+        try:
+            config_path = Path(__file__).parent.parent / "config" / "document_rules.json"
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+                return config.get("general_patterns", {}).get("page_number_patterns", [])
+        except:
+            # Fallback patterns if config is not available
+            return [
+                r'-(\d+)-',  # -7-, -20- pattern
                 r'page\s+(\d+)',
                 r'(\d+)\s+of\s+\d+',
                 r'^\s*(\d+)\s*$',
-                r'p\.?\s*(\d+)',
+                r'p\.?\s*(\d+)'
+            ]
+    
+    def attempt_ordering(self, page_contents: List[Dict]) -> OrderingResult:
+        page_numbers = {}
+        pattern_matches = {}  # Track which pattern worked for each page
+        
+        print(f"\nTesting page number detection with {len(self.config)} patterns...")
+        
+        for i, page in enumerate(page_contents):
+            content = page['content']
+            
+            # Try patterns from config first, then fallback patterns
+            all_patterns = self.config + [
+                r'-(\d+)-',           # IREDA specific: -7-, -20-
+                r'—(\d+)—',           # Em dash variant
+                r'–(\d+)–',           # En dash variant  
+                r'- (\d+) -',         # With spaces
+                r'^\s*-(\d+)-\s*$',   # Line with just page number
+                r'page\s+(\d+)',      # Standard page notation
+                r'(\d+)\s+of\s+\d+',  # X of Y format
+                r'^\s*(\d+)\s*$',     # Just a number on its line
+                r'p\.?\s*(\d+)',      # p.7 or p 7
             ]
             
-            for pattern in patterns:
-                matches = re.findall(pattern, content)
-                if matches:
-                    try:
-                        page_num = int(matches[0])
-                        if 1 <= page_num <= len(page_contents) * 2:
-                            page_numbers[i] = page_num
-                            break
-                    except ValueError:
-                        continue
+            for pattern_idx, pattern in enumerate(all_patterns):
+                try:
+                    matches = re.findall(pattern, content, re.MULTILINE | re.IGNORECASE)
+                    if matches:
+                        for match in matches:
+                            try:
+                                page_num = int(match)
+                                # Reasonable range check (allow for some missing pages)
+                                if 1 <= page_num <= len(page_contents) * 2:
+                                    if i not in page_numbers or page_num < page_numbers[i]:
+                                        page_numbers[i] = page_num
+                                        pattern_matches[i] = {
+                                            'pattern': pattern,
+                                            'match': match,
+                                            'full_text_sample': content[:100]
+                                        }
+                                        print(f"Page {i+1}: Found page number {page_num} using pattern '{pattern}'")
+                                        break
+                            except ValueError:
+                                continue
+                    if i in page_numbers:
+                        break  # Found a match, move to next page
+                except re.error as e:
+                    print(f"Invalid regex pattern '{pattern}': {e}")
+                    continue
         
-        if len(page_numbers) >= len(page_contents) * 0.7:
+        print(f"Successfully detected page numbers for {len(page_numbers)}/{len(page_contents)} pages")
+        
+        # Analyze the quality of detection
+        coverage = len(page_numbers) / len(page_contents)
+        
+        # Check for sequence continuity (good sign)
+        if len(page_numbers) >= 2:
+            detected_numbers = sorted(page_numbers.values())
+            sequence_gaps = sum(1 for i in range(1, len(detected_numbers)) 
+                              if detected_numbers[i] - detected_numbers[i-1] > 1)
+            sequence_quality = 1.0 - (sequence_gaps / len(detected_numbers))
+        else:
+            sequence_quality = 0.5
+        
+        # Need good coverage for high confidence
+        min_coverage = 0.6  # At least 60% of pages should have detectable numbers
+        
+        if coverage >= min_coverage:
+            # Sort by detected page numbers
             sorted_pages = sorted(page_numbers.items(), key=lambda x: x[1])
             order = [item[0] for item in sorted_pages]
             
-            for i in range(len(page_contents)):
-                if i not in order:
-                    order.append(i)
+            # Add pages without detected numbers at the end (in original order)
+            undetected_pages = [i for i in range(len(page_contents)) if i not in page_numbers]
+            order.extend(sorted(undetected_pages))
+            
+            # Calculate confidence based on coverage and sequence quality
+            base_confidence = min(coverage, 0.9)
+            sequence_bonus = sequence_quality * 0.1
+            final_confidence = min(0.95, base_confidence + sequence_bonus)
+            
+            reasoning = [
+                f'Found page numbers in {len(page_numbers)} out of {len(page_contents)} pages',
+                f'Coverage: {coverage:.1%}, Sequence quality: {sequence_quality:.1%}'
+            ]
+            
+            # Add examples of successful detections
+            for i, (page_idx, page_num) in enumerate(sorted_pages[:3]):
+                if page_idx in pattern_matches:
+                    pattern_info = pattern_matches[page_idx]
+                    reasoning.append(f'Page {page_idx+1} → {page_num} (pattern: {pattern_info["pattern"]})')
             
             return OrderingResult(
                 order=order,
-                confidence=0.9,
-                reasoning=[f'Found explicit page numbers for {len(page_numbers)} pages'],
+                confidence=final_confidence,
+                reasoning=reasoning,
                 method="explicit_page_numbers"
             )
         
         return OrderingResult(
             order=list(range(len(page_contents))),
             confidence=0.2,
-            reasoning=['No clear page numbers found'],
-            method="page_numbers_failed"
+            reasoning=[f'Only found page numbers in {len(page_numbers)} pages (need {min_coverage:.0%} coverage)'],
+            method="page_numbers_insufficient"
         )
 
 class ConfigurableBusinessLogicStrategy(BaseOrderingStrategy):
@@ -91,6 +170,7 @@ class ConfigurableBusinessLogicStrategy(BaseOrderingStrategy):
         self.document_config = self._load_document_config()
     
     def _load_document_config(self) -> Dict:
+        """Load document configuration from JSON file"""
         config_path = Path(__file__).parent.parent / "config" / "document_rules.json"
         try:
             with open(config_path, 'r') as f:
@@ -100,26 +180,55 @@ class ConfigurableBusinessLogicStrategy(BaseOrderingStrategy):
             return {"document_types": {}, "general_patterns": {}}
     
     def _detect_document_type(self, page_contents: List[Dict]) -> str:
-        """Automatically detect document type based on content"""
+        """Automatically detect document type based on content analysis"""
         combined_text = " ".join([page['content'].lower() for page in page_contents])
         
         doc_scores = {}
         for doc_type, config in self.document_config.get("document_types", {}).items():
             score = 0
+            total_possible_score = 0
+            
             for section in config["sections"]:
+                section_weight = section.get("weight", 1.0)
+                total_possible_score += section_weight
+                
+                # Check indicators
                 for indicator in section["indicators"]:
                     if indicator.lower() in combined_text:
-                        score += section.get("weight", 1.0)
-            doc_scores[doc_type] = score
+                        score += section_weight * 0.5
+                
+                # Check required_any patterns
+                for required in section.get("required_any", []):
+                    if required.lower() in combined_text:
+                        score += section_weight * 0.3
+                
+                # Check boost patterns (regex)
+                for pattern in section.get("boost_patterns", []):
+                    try:
+                        if re.search(pattern.lower(), combined_text):
+                            score += section_weight * 1.0
+                    except re.error:
+                        continue
+            
+            # Normalize score
+            if total_possible_score > 0:
+                normalized_score = score / total_possible_score
+                doc_scores[doc_type] = normalized_score
+                print(f"Document type '{doc_type}' scored: {normalized_score:.3f}")
         
         if doc_scores:
-            detected_type = max(doc_scores.items(), key=lambda x: x[1])
-            if detected_type[1] > 2.0:  # Minimum threshold
-                return detected_type[0]
+            best_match = max(doc_scores.items(), key=lambda x: x[1])
+            if best_match[1] > 0.3:  # Minimum threshold
+                print(f"Detected document type: {best_match[0]} (confidence: {best_match[1]:.3f})")
+                return best_match[0]
         
-        return "generic"
+        print("No document type matched, using 'loan_agreement' as fallback")
+        return "loan_agreement"  # Fallback for loan documents
     
     def attempt_ordering(self, page_contents: List[Dict]) -> OrderingResult:
+        """Order pages using configurable business logic from JSON"""
+        
+        # Detect document type dynamically
         doc_type = self._detect_document_type(page_contents)
         
         if doc_type not in self.document_config.get("document_types", {}):
@@ -133,56 +242,88 @@ class ConfigurableBusinessLogicStrategy(BaseOrderingStrategy):
         doc_config = self.document_config["document_types"][doc_type]
         page_classifications = []
         
+        print(f"\nClassifying pages using {doc_config['name']} rules...")
+        
         for i, page in enumerate(page_contents):
             content_lower = page['content'].lower()
             best_match = None
             best_score = 0
+            matched_indicators = []
             
             for section in doc_config["sections"]:
                 score = 0
+                section_matched_indicators = []
                 
-                # Indicator matching
+                # Check basic indicators
                 for indicator in section["indicators"]:
-                    if indicator in content_lower:
-                        score += 2 * section.get("weight", 1.0)
-                
-                # Required field matching
-                for required in section.get("required_any", []):
-                    if required in content_lower:
+                    if indicator.lower() in content_lower:
                         score += 1 * section.get("weight", 1.0)
+                        section_matched_indicators.append(indicator)
                 
-                # Boost pattern matching
+                # Check required_any patterns
+                for required in section.get("required_any", []):
+                    if required.lower() in content_lower:
+                        score += 2 * section.get("weight", 1.0)
+                        section_matched_indicators.append(f"required: {required}")
+                
+                # Check boost patterns (regex patterns for stronger matches)
                 for pattern in section.get("boost_patterns", []):
-                    if re.search(pattern, content_lower):
-                        score += 3 * section.get("weight", 1.0)
+                    try:
+                        if re.search(pattern.lower(), content_lower):
+                            score += 3 * section.get("weight", 1.0)
+                            section_matched_indicators.append(f"pattern: {pattern}")
+                    except re.error:
+                        print(f"Invalid regex pattern: {pattern}")
+                        continue
                 
+                # Update best match if this section scores higher
                 if score > best_score:
                     best_score = score
                     best_match = section
+                    matched_indicators = section_matched_indicators
             
-            page_classifications.append({
+            # Store classification results
+            classification = {
                 'page_index': i,
                 'section': best_match,
                 'priority': best_match['priority'] if best_match else 99,
-                'confidence': min(1.0, best_score / 5.0),
-                'score': best_score
-            })
+                'confidence': min(1.0, best_score / 5.0) if best_match else 0.0,
+                'score': best_score,
+                'matched_indicators': matched_indicators
+            }
+            
+            page_classifications.append(classification)
+            
+            section_name = best_match['name'] if best_match else 'unknown'
+            print(f"Page {i+1}: {section_name} (score: {best_score:.1f}, priority: {classification['priority']})")
+            if matched_indicators:
+                print(f"  Matched: {matched_indicators[:3]}")  # Show first 3 matches
         
-        # Sort by priority, then by confidence
-        sorted_classifications = sorted(page_classifications, 
-                                      key=lambda x: (x['priority'], -x['confidence']))
+        # Sort by priority, then by confidence, then by original position
+        sorted_classifications = sorted(
+            page_classifications, 
+            key=lambda x: (x['priority'], -x['confidence'], x['page_index'])
+        )
         
         new_order = [item['page_index'] for item in sorted_classifications]
         
-        # Calculate overall confidence
+        # Calculate overall confidence based on classification success
         classified_pages = sum(1 for item in page_classifications if item['section'] is not None)
-        overall_confidence = min(0.95, (classified_pages / len(page_contents)) * 0.8 + 0.2)
+        classification_rate = classified_pages / len(page_contents)
         
-        # Create reasoning
-        reasoning_parts = [f"Document type: {doc_config['name']}"]
+        # Boost confidence if we have good coverage and high individual scores
+        avg_individual_confidence = sum(item['confidence'] for item in page_classifications) / len(page_classifications)
+        overall_confidence = min(0.95, (classification_rate * 0.7) + (avg_individual_confidence * 0.3))
+        
+        # Generate reasoning
+        reasoning_parts = [f"Document classified as: {doc_config['name']}"]
+        reasoning_parts.append(f"Successfully classified {classified_pages}/{len(page_contents)} pages")
+        
+        # Add details for top classifications
         for item in sorted_classifications[:3]:
             if item['section']:
-                reasoning_parts.append(f"Page {item['page_index'] + 1}: {item['section']['name'].replace('_', ' ').title()}")
+                section_name = item['section']['name'].replace('_', ' ').title()
+                reasoning_parts.append(f"Page {item['page_index'] + 1}: {section_name}")
         
         return OrderingResult(
             order=new_order,
