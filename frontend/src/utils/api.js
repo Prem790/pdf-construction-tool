@@ -1,6 +1,7 @@
 import axios from 'axios';
 
 const API_BASE = 'https://pdf-construction-tool.onrender.com';
+// const API_BASE = 'http://localhost:8000/api';
 
 const api = axios.create({
   baseURL: API_BASE,
