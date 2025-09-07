@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE = 'http://localhost:8000/api';
+const API_BASE = 'https://pdf-construction-tool.onrender.com';
 
 const api = axios.create({
   baseURL: API_BASE,
@@ -67,3 +67,6 @@ export const deleteJob = async (jobId) => {
 };
 
 export default api;
+
+
+
